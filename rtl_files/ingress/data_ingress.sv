@@ -9,12 +9,12 @@ module data_ingress #(
 ) (
     input logic clk,
     input logic rst,
-    axi_if.master m_axi
+    axi_if.master m_axi,
 
     // Additions v2:
     input logic [15:0]adc_ch0,
     input logic [15:0]adc_ch1,
-    input logic adc_valid,
+    input logic adc_valid
 
     
 
