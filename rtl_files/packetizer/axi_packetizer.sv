@@ -8,38 +8,166 @@ module axi_packetizer #(
     input logic rst,
 
     axi_if.slave s_axi_if,
-    axi_if.master m_axi_if
+    axi_if.master m_axi_if,
+
+    input logic [31:0] timestamp_latched,
+    input logic [7:0] capture_len_cfg,
+    input logic [15:0] error_flags
 );
 
-logic [7:0] sample_count;
-logic tlast_reg;
+typedef enum logic [3:0]{
+    ST_IDLE,
+    ST_HEADER,
+    ST_TIMESTAMP,
+    ST_CHNID,
+    ST_SAMPLECOUNT,
+    ST_PAYLOAD,
+    ST_INFO,
+    ST_DONE
+} trans_state ;
 
-wire notify = s_axi_if.tvalid && m_axi_if.tready;
+trans_state state_curr, state_next;
 
-assign m_axi_if.tdata = s_axi_if.tdata;
-assign m_axi_if.tuser = s_axi_if.tuser;
-assign m_axi_if.tvalid = s_axi_if.tvalid;
-assign m_axi_if.tready = s_axi_if.tready;
-assign m_axi_if.tlast = tlast_reg ;
+
+logic [31:0] header;
+logic [31:0] payload;
+logic [7:0] channel_id;
+logic [7:0] sample_cnt;
+logic [2:0] byte_idx;
+logic [7:0] payload_byte_cnt;
+
+// logic tlast_reg;
+
+// wire notify = s_axi_if.tvalid && m_axi_if.tready;
+wire notify = m_axi_if.tvalid && m_axi_if.tready;
+
+always_comb header = 32'h30415144;
+
+// assign m_axi_if.tdata = s_axi_if.tdata;
+// assign m_axi_if.tuser = s_axi_if.tuser;
+// assign m_axi_if.tvalid = s_axi_if.tvalid;
+// assign m_axi_if.tready = s_axi_if.tready;
+// assign m_axi_if.tlast = tlast_reg ;
+
+
     
-always_ff @( posedge clk ) begin : blockName
+always_ff @( posedge clk ) begin 
     if (rst) begin
-        sample_count <= '0;
-        tlast_reg <= 1'b0;
-
-    
+        state_curr<= ST_IDLE;
+        byte_idx <= 0;
+        sample_cnt <= '0;
+        payload_byte_cnt <= 0;
+        // tlast_reg <= 1'b0;
     end
+
     else begin
-        tlast_reg <= notify && (sample_count == 254) ;
-        if(notify) begin
-            if (sample_count == 8'd255) begin
-               
-                sample_count <= '0;
+        // tlast_reg <= notify && (sample_cnt == 254) ;
+        // state_curr <= state_next;
+
+        if (state_curr != state_next) byte_idx<=0;
+        else if (notify) byte_idx<=byte_idx + 1;
+
+
+        // if(notify) begin
+        //     if (sample_count == 8'd255) begin
+        //         sample_count <= '0;
+        //     end
+        //     else begin
+        //         sample_count <= sample_count+1'b1;
+        //     end
+
+        if (state_curr == ST_IDLE && s_axi_if.tvalid && s_axi_if.tready) begin
+            sample_cnt<= 0;
+            channel_id <= s_axi_if.tuser[3:0];
+        end
+
+        if (state_curr == ST_PAYLOAD && s_axi_if.tvalid && s_axi_if.tready) begin
+            payload<= s_axi_if.tdata;
+            payload_byte_cnt<= 0;
+        end
+
+        if (state_curr == ST_PAYLOAD && notify) payload_byte_cnt<=payload_byte_cnt+1;
+        if(state_curr == ST_PAYLOAD && s_axi_if.tvalid && s_axi_if.tready) sample_cnt <= sample_cnt+1;
+        end
+end
+
+always_comb begin
+    state_next = state_curr;
+
+    m_axi_if.tvalid = 1'b0;
+    m_axi_if.tdata = 8'h0;
+    m_axi_if.tlast = 1'b0;
+    s_axi_if.tready = 1'b0;
+
+    case (state_curr)
+
+
+        ST_IDLE: begin
+            s_axi_if.tready = 1'b1;
+            if (s_axi_if.tvalid) state_next = ST_HEADER;
+
+        end 
+
+        ST_HEADER: begin
+            m_axi_if.tvalid = 1'b1;
+            m_axi_if.tdata = header >> (8*byte_idx);
+            if (notify && byte_idx == 3) state_next = ST_TIMESTAMP;
+        end
+
+        ST_TIMESTAMP: begin
+            m_axi_if.tvalid = 1'b1;
+            m_axi_if.tdata = timestamp_latched >> (8*byte_idx);
+            if (notify && byte_idx == 3) state_next = ST_CHNID;
+        end
+
+        ST_CHNID: begin
+            m_axi_if.tvalid = 1'b1;
+            m_axi_if.tdata = channel_id;
+            if (notify) state_next = ST_SAMPLECOUNT;
+
+        end
+
+        ST_SAMPLECOUNT: begin
+            m_axi_if.tvalid = 1'b1;
+            m_axi_if.tdata = capture_len_cfg;
+            if (notify) begin
+                state_next = ST_PAYLOAD;
             end
-            else begin
-                sample_count <= sample_count+1'b1;
+        ST_PAYLOAD: begin
+            s_axi_if.tready = m_axi_if.tready;
+            if(s_axi_if.tready) begin
+                m_axi_if.tvalid = 1'b1;
+                m_axi_if.tdata = payload >> (8*payload_byte_cnt);
+                if(notify && payload_byte_cnt == 3) begin
+                    if (s_axi_if.tlast) state_next = ST_INFO;
+                end
             end
         end
-    end
+        ST_INFO: begin
+
+            m_axi_if.tvalid = 1'b1;
+            m_axi_if.tdata = error_flags >> (8* byte_idx);
+
+
+                if (notify && byte_idx == 3) begin
+                    state_next = ST_DONE;
+                end
+        end
+
+        ST_DONE: begin
+            m_axi_if.tvalid = 1'b1;
+            m_axi_if.tdata = 8'h00;
+            m_axi_if.tlast = 1'b1;
+
+            if(notify) state_next = ST_IDLE;
+
+        end
+        default: state_next = ST_IDLE;
+
+    endcase
+
 end
+
+
+
 endmodule

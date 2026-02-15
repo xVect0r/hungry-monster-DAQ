@@ -6,42 +6,53 @@ module axi_capture_controller #(
     parameter int TS_W   = 32
 )(
     input  logic clk,
-    input  logic rst_n,
-    input  logic [DATA_W-1:0] s_tdata,
-    input  logic s_tvalid,
-    output logic s_tready,
-    input  logic s_tlast,
-    input  logic [USER_W-1:0] s_tuser,
-    output logic [DATA_W-1:0] m_tdata,
-    output logic m_tvalid,
-    input  logic m_tready,
-    output logic m_tlast,
-    output logic [USER_W-1:0] m_tuser,
+    input  logic rst,
+
+    axi_if.slave  s_axi_if,
+    axi_if.master m_axi_if,
+
     input  logic trigger_in,
     input  logic [15:0] debounce_cycles,
     input  logic [15:0] capture_length,
-    input  logic [TS_W-1:0] timestamp_counter,
-    output logic [TS_W-1:0] latched_timestamp,
+
+    
+    input  logic [TS_W-1:0]timestamp_counter,
+    output logic [TS_W-1:0]latched_timestamp,
+
     output logic capture_active
 );
 
-    typedef enum logic [1:0] {
+    typedef enum logic[1:0] {
         IDLE,
-        ARMED,
         CAPTURE
-    } state_t;
+    } state_val;
 
-    state_t state, next_state;
+    state_val state_curr, state_next;
 
     logic [15:0]debounce_cnt;
     logic trigger_sync, trigger_prev;
     logic trigger_rise;
     logic [15:0] sample_count;
 
+    wire trigger_valid = (debounce_cnt == 16'd1);
+    
+    assign trigger_rise = trigger_sync & ~trigger_prev;
+
+    assign capture_active = (state_curr == CAPTURE);
+    assign s_axi_if.tready = (state_curr == CAPTURE) && m_axi_if.tready;
+
+    assign m_axi_if.tvalid = (state_curr == CAPTURE) && s_axi_if.tvalid;
+    assign m_axi_if.tdata  = s_axi_if.tdata;
+    assign m_axi_if.tuser  = s_axi_if.tuser;
+
+    assign m_axi_if.tlast =(state_curr == CAPTURE) && (sample_count == capture_length - 1) && s_axi_if.tvalid && s_axi_if.tready;
+
+
+    // Trigger Logic
     always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            trigger_sync <= 0;
-            trigger_prev <= 0;
+        if (rst) begin
+            trigger_sync <= 1'b0;
+            trigger_prev <= 1'b0;
         end
         else begin
             trigger_sync <= trigger_in;
@@ -49,57 +60,50 @@ module axi_capture_controller #(
         end
     end
 
-    assign trigger_rise = trigger_sync & ~trigger_prev;
-
+    // Trigger Debounce Logic
     always_ff @(posedge clk) begin
-        if (!rst_n) debounce_cnt <= 0;
-        else if (trigger_rise) debounce_cnt <= debounce_cycles;
+        if (rst)
+            debounce_cnt <= 16'd0;
+        else if (trigger_rise) debounce_cnt <= (debounce_cycles == 0) ? 16'd1 : debounce_cycles;
         else if (debounce_cnt != 0) debounce_cnt <= debounce_cnt - 1;
     end
 
-    wire trigger_valid = (debounce_cnt == 1);
-    
 
+    // State Transition Logic
     always_ff @(posedge clk) begin
-        if (!rst_n)
-            state <= IDLE;
-        else
-            state <= next_state;
+        if (rst) state_curr <= IDLE;
+        else state_curr <= state_next;
     end
 
+
+    // Stte Machine 
     always_comb begin
-        next_state = state;
+        state_next = state_curr;
 
-        case (state)
+        case (state_curr)
             IDLE: begin
-                if (trigger_valid) next_state = CAPTURE;
+                if (trigger_valid) state_next =CAPTURE;
             end
-
             CAPTURE: begin
-                if (sample_count == capture_length && m_tvalid && m_tready) next_state = IDLE;
+                if (m_axi_if.tvalid && m_axi_if.tready && (sample_count == capture_length-1)) state_next = IDLE;
             end
+            default: state_next = IDLE;
 
-            default: next_state = IDLE;
         endcase
     end
 
-    assign capture_active = (state == CAPTURE);
-
+    // Sample Count tracking algorithm
     always_ff @(posedge clk) begin
-        if (!rst_n) sample_count <= 0;
-        else if (state == IDLE) sample_count <= 0;
-        else if (state == CAPTURE && s_tvalid && s_tready) sample_count <= sample_count + 1;
+        if (rst) sample_count <= 16'd0;
+        else if (state_curr == IDLE) sample_count <= 16'd0;
+        else if (state_curr == CAPTURE && s_axi_if.tvalid && s_axi_if.tready) sample_count <= sample_count + 1'b1;
     end
 
+    //Timestamp Stamper logic
     always_ff @(posedge clk) begin
-        if (!rst_n) latched_timestamp <= 0;
-        else if (state == IDLE && trigger_valid) latched_timestamp <= timestamp_counter;
+        if (rst) latched_timestamp <= '0;
+        else if (state_curr == IDLE && trigger_valid) latched_timestamp <= timestamp_counter;
     end
 
-    assign s_tready = (state == CAPTURE) && m_tready;
-    assign m_tvalid = (state == CAPTURE) && s_tvalid;
-    assign m_tdata  = s_tdata;
-    assign m_tuser  = s_tuser;
-    assign m_tlast  = (state == CAPTURE) &&(sample_count == capture_length - 1) && s_tvalid && s_tready;
 
 endmodule
