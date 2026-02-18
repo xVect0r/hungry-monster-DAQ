@@ -5,6 +5,11 @@ The current state machine will be fixed with more isolation and packetizer flow 
 
 */
 
+// Version #3
+/*
+The packetizer is upgraded with extra registers to store events
+*/
+
 `timescale 1ns/1ps
 
 module axi_packetizer #(
@@ -48,6 +53,11 @@ logic [1:0] byte_idx;
 logic [7:0] payload_byte_cnt;
 logic[1:0] sample_byte_idx;
 
+
+//V 3
+logic [7:0] capture_len_latched;
+logic [31:0] timestamp_reg;
+logic [15:0] error_flags_reg;
 // logic tlast_reg;
 
 // wire notify = s_axi_if.tvalid && m_axi_if.tready;
@@ -109,6 +119,12 @@ always_ff @( posedge clk ) begin
             payload_byte_cnt<= 0;
             sample_cnt<=0;
             channel_id <= s_axi_if.tuser[3:0];
+
+            //V3
+            capture_len_latched <= capture_len_cfg;
+            timestamp_reg <= timestamp_latched;
+            error_flags_reg <= error_flags;
+
         end
 
         // if (state_curr == ST_PAYLOAD && s_axi_if.tvalid && s_axi_if.tready) begin
@@ -158,7 +174,7 @@ always_comb begin
 
         ST_TIMESTAMP: begin
             m_axi_if.tvalid = 1'b1;
-            m_axi_if.tdata = timestamp_latched >> (8*byte_idx);
+            m_axi_if.tdata = timestamp_reg >> (8*byte_idx);
             // if (notify && byte_idx == 3) state_next = ST_CHNID;
             if (notify_out && byte_idx == 2'd3) state_next = ST_CHNID;
         end
@@ -173,7 +189,7 @@ always_comb begin
 
         ST_SAMPLECOUNT: begin
             m_axi_if.tvalid = 1'b1;
-            m_axi_if.tdata = capture_len_cfg;
+            m_axi_if.tdata = capture_len_latched;
 
             // if (notify) state_next = ST_PAYLOAD;
             if (notify_out) state_next = ST_PAYLOAD;
@@ -197,7 +213,7 @@ always_comb begin
         ST_INFO: begin
 
             m_axi_if.tvalid = 1'b1;
-            m_axi_if.tdata = error_flags >> (8* byte_idx);
+            m_axi_if.tdata = error_flags_reg >> (8* byte_idx);
 
 
             // if (notify && byte_idx == 2'd3) state_next = ST_DONE;
