@@ -1,3 +1,10 @@
+//Version #2
+/*
+The one cycle buble was removed to make the fifo first word fall through (FWFT) compliant 
+Helps in packetizer streaming consistency
+
+*/
+
 module axi_fifo #(
     parameter int DATA_W = 32,
     parameter int USER_W = 8,
@@ -45,12 +52,23 @@ always_ff @(posedge clk) begin
             mem[wr_ptr] <= '{s_axi_if.tdata, s_axi_if.tlast, s_axi_if.tuser};
             wr_ptr<= (wr_ptr == DEPTH-1) ? '0 : wr_ptr + 1'b1;
         end
-        if(!out_valid && count > 0) begin
+        // Version #2 changes
+        
+        if (!out_valid&& count > 0) begin
             out_reg<= mem[rd_ptr];
             out_valid <= 1'b1;
-        end
-        if(pop) begin
             rd_ptr<= (rd_ptr == DEPTH-1) ? '0 : rd_ptr + 1'b1;
+        end
+        // Version #2 changes
+        // if(pop) begin
+        else if (pop && count > 0) begin 
+            out_reg <= mem[rd_ptr];
+            rd_ptr <=(rd_ptr == DEPTH-1) ? '0 : rd_ptr + 1'b1;
+
+        end
+        else begin
+            // Version #2 changes
+            // rd_ptr<= (rd_ptr == DEPTH-1) ? '0 : rd_ptr + 1'b1;
             out_valid <= 1'b0;
         end
         case({push, pop})

@@ -1,6 +1,9 @@
 // Version--2
 // Refined the ingress module according to initial planning 
 // Added 2 channels which provide dual channel data pairs per clock cycle 
+// Version -3 
+// Added new modules to comply with connected fifo and packetizer
+
 
 module data_ingress #(
     parameter int DATA_W = 32,
