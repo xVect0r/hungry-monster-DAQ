@@ -18,7 +18,9 @@ module daq_top (
     output logic [7:0] tx_data,
     output logic tx_valid,
     input  logic tx_ready,
-    output logic tx_last
+    output logic tx_last,
+    
+    output logic capture_active
 );
 
     axi_if ingress_if(clk, rst);
@@ -47,7 +49,7 @@ module daq_top (
         .capture_length(capture_len_cfg),
         .timestamp_counter(timestamp_counter),
         .latched_timestamp(latched_timestamp),
-        .capture_active()
+        .capture_active(capture_active)
     );
 
     axi_fifo u_fifo (
