@@ -1,3 +1,40 @@
+//==============================================================================
+// Module Name : axi_capture_controller
+// Project     : FPGA-Based DAQ System
+// Author      : Soumyadip Roy
+// Description : Controls triggered data acquisition over AXI-Stream.
+//               Latches timestamp on trigger event and forwards a fixed
+//               number of samples while maintaining AXI handshake integrity.
+//
+// Functionality:
+//   - Synchronizes and debounces external trigger input
+//   - Latches timestamp at trigger event
+//   - Enables sample capture for configurable capture length
+//   - Propagates AXI-Stream data with proper tvalid/tready flow control
+//   - Generates tlast on final captured sample
+//
+// Interfaces:
+//   Inputs:
+//     - clk                : System clock
+//     - rst                : Active-high synchronous reset
+//     - trigger_in         : External trigger input
+//     - debounce_cycles    : Trigger debounce duration
+//     - capture_length     : Number of samples per capture window
+//     - timestamp_counter  : Free-running timestamp reference
+//     - s_axi_if           : AXI-Stream slave input interface
+//
+//   Outputs:
+//     - m_axi_if           : AXI-Stream master output interface
+//     - latched_timestamp  : Timestamp captured at trigger event
+//     - capture_active     : High while capture FSM is active
+//
+// Notes:
+//   - Fully synthesizable
+//   - Implements edge detection and programmable debounce logic
+//   - AXI handshake propagation avoids combinational flow issues
+//   - Designed for deterministic sample-bounded acquisition
+//==============================================================================
+
 `timescale 1ns/1ps
 
 module axi_capture_controller #(
@@ -47,8 +84,6 @@ module axi_capture_controller #(
 
     assign m_axi_if.tlast =(state_curr == CAPTURE) && (sample_count == capture_length - 1) && s_axi_if.tvalid && s_axi_if.tready;
 
-
-    // Trigger Logic
     always_ff @(posedge clk) begin
         if (rst) begin
             trigger_sync <= 1'b0;
@@ -60,7 +95,6 @@ module axi_capture_controller #(
         end
     end
 
-    // Trigger Debounce Logic
     always_ff @(posedge clk) begin
         if (rst)
             debounce_cnt <= 16'd0;
@@ -68,15 +102,11 @@ module axi_capture_controller #(
         else if (debounce_cnt != 0) debounce_cnt <= debounce_cnt - 1;
     end
 
-
-    // State Transition Logic
     always_ff @(posedge clk) begin
         if (rst) state_curr <= IDLE;
         else state_curr <= state_next;
     end
 
-
-    // Stte Machine 
     always_comb begin
         state_next = state_curr;
 
@@ -92,14 +122,12 @@ module axi_capture_controller #(
         endcase
     end
 
-    // Sample Count tracking algorithm
     always_ff @(posedge clk) begin
         if (rst) sample_count <= 16'd0;
         else if (state_curr == IDLE) sample_count <= 16'd0;
         else if (state_curr == CAPTURE && s_axi_if.tvalid && s_axi_if.tready) sample_count <= sample_count + 1'b1;
     end
 
-    //Timestamp Stamper logic
     always_ff @(posedge clk) begin
         if (rst) latched_timestamp <= '0;
         else if (state_curr == IDLE && trigger_valid) latched_timestamp <= timestamp_counter;

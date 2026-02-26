@@ -1,14 +1,43 @@
-// Version #2 
-/*
-The packeteizer will isolate input and output handshakes, will also see that the sample_cnt is used to control flow
-The current state machine will be fixed with more isolation and packetizer flow control
-
-*/
-
-// Version #3
-/*
-The packetizer is upgraded with extra registers to store events
-*/
+//==============================================================================
+// Module Name : axi_packetizer
+// Project     : FPGA-Based DAQ System
+// Author      : Soumyadip Roy
+// Description : Formats captured AXI-Stream data into a structured byte-level
+//               packet containing header, timestamp, metadata, payload, and
+//               error information.
+//
+// Functionality:
+//   - Waits for captured sample stream
+//   - Generates fixed header signature
+//   - Inserts latched timestamp
+//   - Appends channel ID and sample count
+//   - Serializes multi-byte payload into byte-wise stream
+//   - Appends error/status information
+//   - Generates tlast at packet completion
+//
+// Packet Structure (Byte-Oriented):
+//   [HEADER][TIMESTAMP][CHANNEL_ID][SAMPLE_COUNT]
+//   [PAYLOAD...][ERROR_FLAGS][END]
+//
+// Interfaces:
+//   Inputs:
+//     - clk                : System clock
+//     - rst                : Active-high synchronous reset
+//     - s_axi_if           : AXI-Stream slave input (captured samples)
+//     - timestamp_latched  : Timestamp captured at trigger event
+//     - capture_len_cfg    : Configured number of samples per packet
+//     - error_flags        : Error/status metadata
+//     - m_axi_if.tready    : Downstream ready signal
+//
+//   Outputs:
+//     - m_axi_if           : Byte-wise AXI-Stream packet output
+//
+// Notes:
+//   - Fully synthesizable FSM-based packet generator
+//   - Byte-serialization of 32-bit words via internal indexing
+//   - Uses handshake-based state transitions (no combinational triggers)
+//   - Designed for deterministic packet framing and timing closure
+//==============================================================================
 
 `timescale 1ns/1ps
 
@@ -43,8 +72,6 @@ trans_state state_curr, state_next;
 
 logic [31:0] header=32'h30415144;
 logic [31:0] payload_reg;
-
-//Version #2 Control
 logic word_active;
 
 logic [7:0] channel_id;
@@ -52,32 +79,14 @@ logic [7:0] sample_cnt;
 logic [1:0] byte_idx;
 logic [7:0] payload_byte_cnt;
 logic[1:0] sample_byte_idx;
-
-
-//V 3
 logic [7:0] capture_len_latched;
 logic [31:0] timestamp_reg;
 logic [15:0] error_flags_reg;
-// logic tlast_reg;
-
-// wire notify = s_axi_if.tvalid && m_axi_if.tready;
-
-//Version #2 Control signals to isolate input and output handshake
 
 wire notify_out = m_axi_if.tvalid && m_axi_if.tready;
 wire notify_in = s_axi_if.tvalid && s_axi_if.tready;
 
 
-// always_comb header = 32'h30415144;
-
-// assign m_axi_if.tdata = s_axi_if.tdata;
-// assign m_axi_if.tuser = s_axi_if.tuser;
-// assign m_axi_if.tvalid = s_axi_if.tvalid;
-// assign m_axi_if.tready = s_axi_if.tready;
-// assign m_axi_if.tlast = tlast_reg ;
-
-
-//V2 state ff
 always_ff @(posedge clk) begin
     if(rst) state_curr <= ST_IDLE;
     else state_curr <= state_next;
@@ -86,48 +95,27 @@ end
     
 always_ff @( posedge clk ) begin 
     if (rst) begin
-
-        //V2 changes
-        // state_curr<= ST_IDLE;
         byte_idx <= 0;
         sample_cnt <= '0;
         payload_byte_cnt <= 0;
         word_active <= 0;
         sample_byte_idx<='0;
-        // tlast_reg <= 1'b0;
     end
 
     else begin
-        // tlast_reg <= notify && (sample_cnt == 254) ;
-        // state_curr <= state_next;
 
         if (state_curr != state_next) byte_idx<=0;
         else if (notify_out) byte_idx<=byte_idx + 1;
 
-
-        // if(notify) begin
-        //     if (sample_count == 8'd255) begin
-        //         sample_count <= '0;
-        //     end
-        //     else begin
-        //         sample_count <= sample_count+1'b1;
-        //     end
-
-        //V2 Changes
-        // if (state_curr == ST_IDLE && s_axi_if.tvalid && s_axi_if.tready) begin
         if (state_curr == ST_IDLE && notify_in && state_next == ST_HEADER) begin
             payload_byte_cnt<= 0;
             sample_cnt<=0;
             channel_id <= s_axi_if.tuser[3:0];
-
-            //V3
             capture_len_latched <= capture_len_cfg;
             timestamp_reg <= timestamp_latched;
             error_flags_reg <= error_flags;
 
         end
-
-        // if (state_curr == ST_PAYLOAD && s_axi_if.tvalid && s_axi_if.tready) begin
         if (state_curr == ST_PAYLOAD && notify_in && !word_active) begin
             payload_reg<= s_axi_if.tdata;
             
@@ -136,12 +124,8 @@ always_ff @( posedge clk ) begin
             word_active <= 1;
             sample_cnt <= sample_cnt+1;
         end
-        //V2 Changes
-        // if (state_curr == ST_PAYLOAD && notify) sample_byte_idx<=sample_byte_idx+1;
         if (state_curr == ST_PAYLOAD && notify_out && word_active) begin
             sample_byte_idx<=sample_byte_idx+1;
-            // if(state_curr == ST_PAYLOAD && s_axi_if.tvalid && s_axi_if.tready) sample_cnt <= sample_cnt+1;
-            // sample_cnt <= sample_cnt+1;
             if (sample_byte_idx == 2'd3) word_active <=0;
             
         end
@@ -168,21 +152,18 @@ always_comb begin
         ST_HEADER: begin
             m_axi_if.tvalid = 1'b1;
             m_axi_if.tdata = header >> (8*byte_idx);
-            // if (notify && byte_idx == 3) state_next = ST_TIMESTAMP;
             if (notify_out && byte_idx == 2'd3) state_next = ST_TIMESTAMP;
         end
 
         ST_TIMESTAMP: begin
             m_axi_if.tvalid = 1'b1;
             m_axi_if.tdata = timestamp_reg >> (8*byte_idx);
-            // if (notify && byte_idx == 3) state_next = ST_CHNID;
             if (notify_out && byte_idx == 2'd3) state_next = ST_CHNID;
         end
 
         ST_CHNID: begin
             m_axi_if.tvalid = 1'b1;
             m_axi_if.tdata = channel_id;
-            // if (notify) state_next = ST_SAMPLECOUNT;
             if (notify_out) state_next = ST_SAMPLECOUNT;
 
         end
@@ -190,23 +171,16 @@ always_comb begin
         ST_SAMPLECOUNT: begin
             m_axi_if.tvalid = 1'b1;
             m_axi_if.tdata = capture_len_latched;
-
-            // if (notify) state_next = ST_PAYLOAD;
             if (notify_out) state_next = ST_PAYLOAD;
             
         end
         ST_PAYLOAD: begin
-            // s_axi_if.tready = m_axi_if.tready;
             s_axi_if.tready =!word_active;
-
-            // if(s_axi_if.tready) begin
             if(word_active) begin
                 m_axi_if.tvalid = 1'b1;
                 m_axi_if.tdata = payload_reg >> (8*sample_byte_idx);
-                // if(notify && payload_byte_cnt == 3) begin
                 if(notify_out && sample_byte_idx == 2'd3) begin
-                    // if (s_axi_if.tlast) state_next = ST_INFO;
-                    if (sample_cnt == capture_len_cfg) state_next = ST_INFO;
+                    if (sample_cnt == capture_len_latched) state_next = ST_INFO;
                 end
             end
         end
@@ -214,9 +188,6 @@ always_comb begin
 
             m_axi_if.tvalid = 1'b1;
             m_axi_if.tdata = error_flags_reg >> (8* byte_idx);
-
-
-            // if (notify && byte_idx == 2'd3) state_next = ST_DONE;
             if (notify_out && byte_idx == 2'd3) state_next = ST_DONE;
                 
         end
@@ -225,8 +196,6 @@ always_comb begin
             m_axi_if.tvalid = 1'b1;
             m_axi_if.tdata = 8'h00;
             m_axi_if.tlast = 1'b1;
-
-            // if(notify) state_next = ST_IDLE;
             if(notify_out) state_next = ST_IDLE;
 
         end

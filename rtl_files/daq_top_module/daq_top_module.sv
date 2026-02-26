@@ -1,4 +1,41 @@
-// Daq top module
+//==============================================================================
+// Module Name : daq_top
+// Project     : FPGA-Based DAQ System
+// Author      : Soumyadip Roy
+// Description : Top-level integration module for the FPGA-based DAQ pipeline.
+//               Connects data ingress, capture control, FIFO buffering, and
+//               packetization into a complete AXI-Stream based architecture.
+//
+// Functionality:
+//   - Interfaces with external ADC inputs
+//   - Performs trigger-based bounded capture
+//   - Buffers captured samples through AXI FIFO (FWFT capable)
+//   - Packetizes data with timestamp and metadata
+//   - Streams final packet over AXI-Stream output
+//
+// Interfaces:
+//   Inputs:
+//     - clk               : System clock
+//     - rst               : Active-high synchronous reset
+//     - adc_ch0/ch1       : ADC input channels
+//     - adc_valid         : ADC data valid indicator
+//     - trigger_in        : External trigger signal
+//     - timestamp_counter : Free-running system timestamp
+//     - capture_len_cfg   : Configurable capture length
+//     - error_flags       : Status/error metadata for packet header
+//     - tx_ready          : Downstream AXI ready signal
+//
+//   Outputs:
+//     - tx_data           : Packetized output data stream
+//     - tx_valid          : Output data valid indicator
+//     - tx_last           : End-of-packet indicator
+//     - capture_active    : Indicates active capture window
+//
+// Notes:
+//   - Structured as a fully streaming AXI-Stream pipeline
+//   - Modular architecture enables easy subsystem verification
+//   - Designed for clean timing closure and synthesis portability
+//==============================================================================
 
 module daq_top (
     input logic clk,
