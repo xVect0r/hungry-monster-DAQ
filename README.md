@@ -167,7 +167,7 @@ Simulation validated:
 
 ---
 
-## 🛠 Reset Behavior
+##  Reset Behavior
 
 On reset:
 
