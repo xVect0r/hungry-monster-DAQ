@@ -167,7 +167,6 @@ always_ff @(posedge clk) begin
             end
 
             ST_PAYLOAD: begin
-                // Only assert valid if we actually have a word loaded
                 if (word_active || (state_curr == ST_IDLE && notify_in)) begin
                     m_axi_if.tvalid <= 1'b1;
                     m_axi_if.tdata  <= (word_active) ? (payload_reg >> (8 * sample_byte_idx)) : s_axi_if.tdata[7:0];
