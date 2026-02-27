@@ -132,79 +132,103 @@ always_ff @( posedge clk ) begin
         end
 end
 
+always_ff @(posedge clk) begin
+    if (rst) begin
+        m_axi_if.tvalid <= 1'b0;
+        m_axi_if.tdata  <= 8'h0;
+        m_axi_if.tlast  <= 1'b0;
+    end else begin
+        m_axi_if.tvalid <= 1'b0;
+        m_axi_if.tlast  <= 1'b0;
+
+        case (state_next) 
+            ST_IDLE: begin
+                m_axi_if.tdata <= 8'h0;
+            end
+            
+            ST_HEADER: begin
+                m_axi_if.tvalid <= 1'b1;
+                m_axi_if.tdata  <= header >> (8 * (state_curr == ST_HEADER ? (notify_out ? byte_idx + 1 : byte_idx) : 0));
+            end
+
+            ST_TIMESTAMP: begin
+                m_axi_if.tvalid <= 1'b1;
+                m_axi_if.tdata  <= timestamp_reg >> (8 * (state_curr == ST_TIMESTAMP ? (notify_out ? byte_idx + 1 : byte_idx) : 0));
+            end
+
+            ST_CHNID: begin
+                m_axi_if.tvalid <= 1'b1;
+                m_axi_if.tdata  <= channel_id;
+            end
+
+            ST_SAMPLECOUNT: begin
+                m_axi_if.tvalid <= 1'b1;
+                m_axi_if.tdata  <= capture_len_latched;
+            end
+
+            ST_PAYLOAD: begin
+                // Only assert valid if we actually have a word loaded
+                if (word_active || (state_curr == ST_IDLE && notify_in)) begin
+                    m_axi_if.tvalid <= 1'b1;
+                    m_axi_if.tdata  <= (word_active) ? (payload_reg >> (8 * sample_byte_idx)) : s_axi_if.tdata[7:0];
+                end
+            end
+
+            ST_INFO: begin
+                m_axi_if.tvalid <= 1'b1;
+                m_axi_if.tdata  <= error_flags_reg >> (8 * (state_curr == ST_INFO ? (notify_out ? byte_idx + 1 : byte_idx) : 0));
+            end
+
+            ST_DONE: begin
+                m_axi_if.tvalid <= 1'b1;
+                m_axi_if.tdata  <= 8'h00;
+                m_axi_if.tlast  <= 1'b1;
+            end
+        endcase
+    end
+end
+
 always_comb begin
     state_next = state_curr;
-
-    m_axi_if.tvalid = 1'b0;
-    m_axi_if.tdata = 8'h0;
-    m_axi_if.tlast = 1'b0;
     s_axi_if.tready = 1'b0;
 
     case (state_curr)
-
-
         ST_IDLE: begin
             s_axi_if.tready = 1'b1;
             if (notify_in) state_next = ST_HEADER;
-
-        end 
+        end
 
         ST_HEADER: begin
-            m_axi_if.tvalid = 1'b1;
-            m_axi_if.tdata = header >> (8*byte_idx);
             if (notify_out && byte_idx == 2'd3) state_next = ST_TIMESTAMP;
         end
 
         ST_TIMESTAMP: begin
-            m_axi_if.tvalid = 1'b1;
-            m_axi_if.tdata = timestamp_reg >> (8*byte_idx);
             if (notify_out && byte_idx == 2'd3) state_next = ST_CHNID;
         end
 
         ST_CHNID: begin
-            m_axi_if.tvalid = 1'b1;
-            m_axi_if.tdata = channel_id;
             if (notify_out) state_next = ST_SAMPLECOUNT;
-
         end
 
         ST_SAMPLECOUNT: begin
-            m_axi_if.tvalid = 1'b1;
-            m_axi_if.tdata = capture_len_latched;
             if (notify_out) state_next = ST_PAYLOAD;
-            
         end
-        ST_PAYLOAD: begin
-            s_axi_if.tready =!word_active;
-            if(word_active) begin
-                m_axi_if.tvalid = 1'b1;
-                m_axi_if.tdata = payload_reg >> (8*sample_byte_idx);
-                if(notify_out && sample_byte_idx == 2'd3) begin
-                    if (sample_cnt == capture_len_latched) state_next = ST_INFO;
-                end
-            end
-        end
-        ST_INFO: begin
 
-            m_axi_if.tvalid = 1'b1;
-            m_axi_if.tdata = error_flags_reg >> (8* byte_idx);
-            if (notify_out && byte_idx == 2'd3) state_next = ST_DONE;
-                
+        ST_PAYLOAD: begin
+            s_axi_if.tready = !word_active;
+            if (notify_out && sample_byte_idx == 2'd3 && sample_cnt == capture_len_latched) 
+                state_next = ST_INFO;
+        end
+
+        ST_INFO: begin
+            if (notify_out && byte_idx == 1'd1) state_next = ST_DONE; 
         end
 
         ST_DONE: begin
-            m_axi_if.tvalid = 1'b1;
-            m_axi_if.tdata = 8'h00;
-            m_axi_if.tlast = 1'b1;
-            if(notify_out) state_next = ST_IDLE;
-
+            if (notify_out) state_next = ST_IDLE;
         end
-        default: state_next = ST_IDLE;
-
     endcase
-
 end
-
 
 
 endmodule
