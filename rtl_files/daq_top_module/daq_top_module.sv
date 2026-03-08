@@ -52,12 +52,18 @@ module daq_top (
     input logic [7:0] capture_len_cfg,
     input logic [15:0] error_flags,
 
+    input logic usb_full,
+
     output logic [7:0] tx_data,
     output logic tx_valid,
     input  logic tx_ready,
     output logic tx_last,
     
-    output logic capture_active
+    output logic capture_active,
+
+    output logic [31:0]usb_data,
+    output logic usb_wr_en,
+
 );
 
     axi_if ingress_if(clk, rst);
@@ -66,6 +72,7 @@ module daq_top (
     axi_if packet_if(clk, rst);
 
     logic [31:0] latched_timestamp;
+    logic usb_ready;
 
     data_ingress u_ingress (
         .clk(clk),
@@ -106,9 +113,23 @@ module daq_top (
         .error_flags(error_flags)
     );
 
+    usb_tx_if usb_tx_inst (
+        .clk(clk),
+        .rst(rst),
+
+        .s_tdata(packet_if.tdata),
+        .s_tvalid(packet_if.tvalid),
+        .s_tready(usb_ready),
+        .s_tlast(packet_if.tlast),
+
+        .usb_data(usb_data),
+        .usb_wr_en(usb_wr_en),
+        .usb_full(usb_full)
+    );
+
     assign tx_data  = packet_if.tdata;
     assign tx_valid = packet_if.tvalid;
-    assign packet_if.tready = tx_ready;
+    assign packet_if.tready = usb_ready & tx_ready;
     assign tx_last  = packet_if.tlast;
 
 endmodule
