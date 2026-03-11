@@ -62,7 +62,7 @@ module daq_top (
     output logic capture_active,
 
     output logic [31:0]usb_data,
-    output logic usb_wr_en,
+    output logic usb_wr_en
 
 );
 
@@ -90,7 +90,7 @@ module daq_top (
         .m_axi_if(capture_if),
         .trigger_in(trigger_in),
         .debounce_cycles(16'd2),
-        .capture_length(capture_len_cfg),
+        .capture_length({{8{1'b0}},capture_len_cfg}),
         .timestamp_counter(timestamp_counter),
         .latched_timestamp(latched_timestamp),
         .capture_active(capture_active)
